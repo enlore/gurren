@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+    <head>
+
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+
+        <title>TLM</title>
+
+        <script src="/app/lib/jquery-2.1.1.js"></script>
+
+        <script src="/app/lib/seele.js"></script> <!-- plugins -->
+        <script src="/app/lib/cognition-ajax.js"></script> <!-- net io -->
+        <script src="/app/lib/catbus.js"></script> <!-- data flow -->
+        <script src="/app/lib/rei.js"></script>  <!-- dom control -->
+        <script src="/app/lib/vash.js"></script>  <!-- parsing -->
+        <script src="/app/lib/ohmu.js"></script>  <!-- batch file loader -->
+        <script src="/app/lib/kakashi.js"></script>  <!-- alias/file resolver -->
+
+        <script src="/app/lib/base64-string.js"></script>
+        <script src="/app/lib/lz-string.js"></script>
+        <script src="/app/lib/cognition.js"></script>
+
+    </head>
+
+    <body>
+        <!-- this div becomes the root node for the dom of your app -->
+        <div id="cognition"></div>
+
+        <script>
+            $(function () {
+                var appRoot = $("#cognition")[0];
+
+                $.cognition.netDefaults({
+                    accept: "json", // alias of type, which is alias of format
+                    contentType: "json"
+                });
+
+                $.cognition.init(appRoot, "/app/app.html", "/app/lib/grue.html");
+            });
+        </script>
+    </body>
+</html>
+
