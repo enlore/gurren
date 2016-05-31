@@ -27,16 +27,17 @@
             settings.dataType    = _settings.accept || _settings.type || _settings.format || "html";
             settings.contentType = _settings.contentType || "json";
             settings.headers     = _settings.headers;
+            settings.timeout     = _settings.timeout || 10000;
 
             _xhr = jQuery.ajax(settings)
                 .done(function (resp) {
+                    iface.write("done", "condition");
                     iface.write(resp);
                     iface.write(resp, "done");
-                    iface.write("done", "condition");
 
                 }).fail(function (err) {
-                    iface.write(err, "error");
                     iface.write("error", "condition");
+                    iface.write(err, "error");
                 })
         }
 

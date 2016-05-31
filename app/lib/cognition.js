@@ -34,6 +34,7 @@
     var COG_ROOT = bus.demandTree('COG_ROOT');
 
     var buildNum = 'NEED_BUILD_NUM';
+    downloader.cacheBuster("app_version", buildNum);
 
     // cognition data types
 
@@ -47,6 +48,7 @@
     var READ = 'read';
 
 
+    // TODO merge note - this should be?
     var webServiceDefaults = {};
 
     cognition.netDefaults = function netDefaults (defaults) {
@@ -184,6 +186,7 @@
         this.methodMap = {};
         this.childMap = {};
         this.webServiceMap = {};
+        this.sockMap = {};
 
         this.order = false; // for chains
         this.listKey = null;
@@ -248,7 +251,7 @@
         {name: 'adapters', method: 'createAdapter'},
         {name: 'dataSources', method: 'createData'},
         {name: 'commands', method: 'demandData'},
-        {name: 'methods', method: 'createMethod'}
+        {name: 'methods', method: 'createMethod'},
 
     ];
 
@@ -299,9 +302,9 @@
         if(defs)
             self._cogFirstBuildDeclarations(defs);
 
-
         self.scriptData.init();
 
+        self.doTemplateBindings();
 
         if(defs) {
 
@@ -320,9 +323,7 @@
             });
         }
 
-
         self.scriptData.start();
-
 
     };
 
@@ -394,6 +395,7 @@
 
             if(!placeholder) {
 
+                // if not target node, todo throw error in cog creation stuff to say node not present in template
                 mi.placeholder = getPlaceholderDiv();
                 mi.targetNode = (self.isPinion) ? self.targetNode : self.scriptData[mi.target];
                 mi.targetNode.append(mi.placeholder);
@@ -594,6 +596,8 @@
 
     MapItem.prototype._seekListSource = function(){
 
+        if(this.destroyed || !this.parent || this.parent.destroyed) return;
+
         if(this.source){
             this._resolveSource();
         } else {
@@ -647,8 +651,13 @@
                 displayItem = listItem.isAlloy ? listItem.origin : listItem;
             }
 
-            if(this.order)
-                this.parent.localSel.append(displayItem.localSel);
+            //if(this.order)
+                //this.parent.localSel.append(displayItem.localSel);
+
+            if(this.order) {
+                displayItem.localSel.reparent();
+            }
+
             dataKeyMap[itemKey] = listItem;
 
         }
@@ -658,7 +667,6 @@
             if(!dataKeyMap[oldKey])
                 destroyMapItem(listItem);
         }
-
 
     };
 
@@ -683,6 +691,9 @@
         sd.index = mi.itemOrder;
         sd.key = mi.itemKey;
 
+        mi._templates = parser.templates(url);
+        mi._boundNodes = {};
+
         mi.aliasContext1 = resolver.resolveAliasContext(mi.resolvedUrl, mi.aliasContext0, mi._declarationDefs.aliases);
 
         // expose aliases to scriptData -- todo make this look nicer and use functions
@@ -690,7 +701,6 @@
             var aliasDef = mi._declarationDefs.aliases[j];
             if(aliasDef.prop)
                 sd[aliasDef.name] = mi.aliasContext1.aliasMap.map[aliasDef.name];
-
         }
 
         mi.aliasContext2 = mi.aliasContext1; // later modified if alloys contain aliases
@@ -702,6 +712,11 @@
             var nodes = display.querySelectorAll('[id]');
             for(var i = 0; i < nodes.length; i++){
                 var node = nodes[i];
+
+                if (mi._templates[node.id]) {
+                    mi._boundNodes[node.id] = node;
+                }
+
                 var cameCaseName = camelCase(node.id);
                 sd[cameCaseName] = dom(node);
                 node.setAttribute('id', mi.uid + '_' + cameCaseName);
@@ -724,6 +739,8 @@
     };
 
     MapItem.prototype._cogPreInitialize = function(){
+
+        if(this.destroyed || !this.parent || this.parent.destroyed) return;
 
         var requirements = this._declarationDefs.requires;
 
@@ -1179,6 +1196,17 @@
 
     };
 
+
+    MapItem.prototype.doTemplateBindings = function doTemplateBindings (defs) {
+        var nodes = this._boundNodes;
+        var syntaxPlans = this._templates;
+
+        // null is passed as the context since this function _is already bound_
+        // and one can't overwrite the `this` of a function on which `bind` has
+        // already been called
+        for (var key in syntaxPlans) this.scriptData["_templateBinding_" + key].call(null, this);
+    };
+
     MapItem.prototype.createMethod = function(def){
 
         var mi = this;
@@ -1271,8 +1299,10 @@
 
         var externalData = z.findData(externalName, 'parent', def.optional); // name of data point to follow or control
 
-        if(!externalData) return;
+        if(def.control && !externalData && def.bypass)
+            externalData = z.demandData(def.bypass);
 
+        if(!externalData) return;
 
         if(def.control){
             data.on('*').host(this.uid).pipe(externalData);
@@ -1367,6 +1397,18 @@
 
         }
 
+        if (def.socket) {
+
+            var settings = this._resolveValueFromType(def.socket, def.socketType);
+
+            if (settings === void 0)
+                throw new Error("Sockets must come equiped with settings")
+
+            var sock = new WSocket(settings, self, data);
+
+            self.sockMap[data._id] = sock;
+        }
+
         return data;
 
     };
@@ -1398,6 +1440,18 @@
     };
 
 
+    var WSocket = function WSocket (settings, cog, location) {
+        this._cog = cog;
+        this._location = location;
+        this.settings = settings;
+
+        cognition.plugins.use("tachikoma", this._location);
+    }
+
+    WSocket.prototype.send = function send (msg) {
+        this._location.write(msg, "send");
+    }
+
     var WebService = function() {
 
         this._cog = null;
@@ -1418,6 +1472,8 @@
         }
 
         this._location = location;
+
+        cognition.plugins.use("ajax", this._location);
 
         location.on('settings,inline_settings')
             .host(cog.uid)
@@ -1449,10 +1505,6 @@
             .emit('do_request')
             .pipe(location);
 
-        location.on('request')
-            .batch()
-            .run(function(msg){console.log('REQUEST SETTINGS:', msg);});
-
         this._cog = cog;
         this.settings(settings);
         this._location.service(this);
@@ -1462,7 +1514,6 @@
     };
 
     WebService.prototype.settings = function(settings) {
-
 
         if(arguments.length === 0)
             return this._settings; // todo copy and freeze object to avoid outside mods?
@@ -1522,18 +1573,14 @@
 
     WebService.prototype._runRequest = function(){
 
-        var self = this;
+        this._primed = false;
+        this.abort();
 
-        self._primed = false;
-        self.abort();
-        self._location.write(self._settings, 'request');
-        self._location.write('busy', 'condition');
+        this._location.write(this._settings, 'request');
 
-        cognition.plugins.use("ajax", self._location)
+        this._location.write('busy', 'condition');
 
-        self._location.write(self._settings, "do_request");
-
-        return self;
+        return this;
 
     };
 

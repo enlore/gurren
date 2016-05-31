@@ -1,4 +1,8 @@
+/* jshint node: false, esversion: 6 */
+// version 1.5.0
+
 ;(function VASH(context) {
+    "use strict";
 
     // adding 'ghost' attribute
 
@@ -17,6 +21,7 @@
     var blueprintMap = {};
     var displayMap = {};
     var scriptMap = {};
+    var templateMap = {};
 
     var defaultScriptDataPrototype = {
 
@@ -80,6 +85,9 @@
         return displayMap[url];
     };
 
+    Vash.templates = function (url) {
+        return templateMap[url];
+    };
 
     function buildFragment(str) {
 
@@ -154,6 +162,9 @@
         var blueSel = childNodesByName(frag.querySelector('blueprint'));
         var scriptSel = frag.querySelector('script');
         var htmlSel = unwrapDisplay(frag.querySelector('display'));
+        var bindSel = htmlSel.querySelectorAll("[bind]");
+        var templSel = {};
+        var templId = 0;
 
         var scriptText= scriptSel && scriptSel.innerHTML;
 
@@ -170,6 +181,200 @@
 
         if(!activeScriptData)
             throw new Error("Script Data Failure:" + url);
+
+        Array.prototype.map.call(bindSel, getBind).forEach(doParse);
+
+        function camelCase(str){
+            return str.replace( /-([a-z])/ig, function( all, letter ) {
+                return letter.toUpperCase();
+            } );
+        }
+
+        function doParse (chunk, _i) {
+            // use given id or gen one
+            var id = chunk.node.id = chunk.node.id || "autogen--bound-" + templId++;
+
+            var plans = templSel[id] = parseTemplate(chunk.bind);
+
+            var methodName = "_templateBinding_" + id;
+
+            activeScriptData[methodName] = boundTemplateExecutorThing.bind(this, plans, id);
+
+            function boundTemplateExecutorThing (plans, id, ctx) {
+                //var this = ctx;
+
+                var camelId = camelCase(id);
+
+                for (var i = 0; i < plans.length; i++) {
+                    // find
+                    // autorun
+                    // watch
+                    // need
+                    // topic
+                    // pipe
+                    // tarnsformPresent
+                    // transformType
+                    // transform
+                    // toggle
+
+                    var def = {
+                        autorun: true,
+                        topic: "update",
+                        watch: []
+                    };
+
+                    var tokens = plans[i];
+
+                    var first = tokens[0];
+                    var last = tokens[ tokens.length - 1 ];
+
+                    // everything is a need for a multi sensor
+                    if (Array.isArray(first)) {
+                        var needs = [];
+
+                        // no topic for you if you are doing a multi
+                        first.forEach(function doDataChunk (tok) {
+                            needs.push(tok.name);
+                        });
+
+                        def.watch = def.need = needs;
+                        def.group = true;
+                        def.batch = true;
+                        def.retain = true;
+
+                    } else if (first.type && first.type === "data") {
+                        if (first.need) {
+                            def.need = first.name;
+                            def.watch = first.name;
+                        } else {
+                            def.watch = first.name;
+                            def.optional = first.optional || false;
+                        }
+
+                        if (first.topic) def.on = first.topic;
+
+                    } else if (first.type && first.type === "event") {
+                        def.find = camelId;
+                        def.topic = first.name;
+                    } else {
+                        var err = new Error("Malformed first token in plan.");
+                        err._token = first;
+                        throw err;
+                    }
+
+                    var methodName = "_templateMethod_" + id + "_" + i;
+
+                    // this needs to become a recursive chomper, i think
+                    ctx.scriptData[methodName] = (function templateBoundIntermediate (toks, arg) {
+                        // no middle steps
+                        if (toks.length === 2) return arg;
+
+                        var filterStop = false;
+                        var cur = arg;
+
+                        console.log(toks);
+
+                        // skip the first and last
+                        for (var i = 1; i < toks.length - 1; i++) {
+                            var tok = toks[i];
+
+                            if (tok.type === "prop") {
+                                if (tok.optional) {
+                                    cur = cur[tok.name] || undefined;
+                                } else {
+                                    if (!cur.hasOwnProperty(tok.name)) {
+                                        throw new Error("Trying to grab nonexistant prop " + tok.name + " from val of " + toks[i - 1].name);
+                                    } else {
+                                        cur = cur[tok.name];
+                                    }
+                                }
+
+                            } else if (Array.isArray(tok)) {
+                                /**
+                                 * So what you get here is reflective of the
+                                 * way watching multiple data locs works:
+                                 *
+                                 * - for one data loc watched, you just get the
+                                 *   value back from the read()
+                                 * - for more than one watched, you get each
+                                 *   val back in an object keyed by the loc
+                                 *   name
+                                 */
+                                var vals = {};
+
+                                for (var i = 0; i < tok.length; i++) {
+                                    // NOTE setting a default here, careful
+                                    // mang
+                                    vals[tok[i].name] = ctx.findData(tok[i].name).read(tok[i].topic || "update");
+                                }
+
+                                cur = vals;
+
+                            } else if (tok.type === "data") {
+                                cur = ctx.findData(tok.name).read(tok.topic);
+
+                            } else if (tok.type === "method") {
+                                if (tok.filter && !ctx.scriptData[tok.name](cur)) {
+                                    filterStop = true;
+                                    //break;
+                                }
+
+                                if (!ctx.scriptData[tok.name]) {
+                                    throw new Error("Cog has no transform or filter method (" + tok.name + ") in scope");
+                                }
+                                cur = ctx.scriptData[tok.name](cur);
+
+                            } else if (tok.type === "attr") {
+                                var _node = ctx.scriptData[camelId].raw();
+
+                                if (tok.name === "value") {
+                                    cur = _node.value;
+                                } else {
+                                    cur = ctx.scriptData[camelId].raw().getAttribute(tok.name);
+                                }
+                            }
+                        }
+
+                        if (!filterStop) return cur;
+
+                    }).bind(ctx, tokens);
+
+                    // emit, emitPresent, emitType
+
+                    def.transform = methodName;
+                    def.transformPresent = true;
+                    def.transformType = PROP;
+
+                    if (last.type === "data") {
+                        def.pipe = last.name;
+
+                    } else if ( last.type === "attr") {
+                        var exitMethodName = "_templateMethod_exit_" + id + "_" + i;
+
+                        ctx.scriptData[exitMethodName] = (function templateBoundExit (val) {
+                            ctx.scriptData[camelId].raw()[last.name] = val;
+                        }).bind(ctx);
+
+                        def.run = exitMethodName;
+
+                    } else if (last.type === "method") {
+                        def.run = last.name;
+                    }
+
+                    ctx._declarationDefs.sensors.push(def);
+                }
+            }
+        }
+
+        function getBind (node) {
+            return {
+                node: node,
+                bind: node.getAttribute("bind")
+            };
+        }
+
+        templateMap[url] = templSel;
+
 
         scriptMap[url] = activeScriptData;
         activeScriptData = null;
@@ -256,6 +461,7 @@
         decs.valves = [].concat(getDefs2(sel.valve, extractValveDef2));
         decs.dataSources = [].concat(getDefs2(sel.data, extractDataDef2));
         decs.dataSources = decs.dataSources.concat(getDefs2(sel.net, extractNetDef2));
+        decs.dataSources = decs.dataSources.concat(getDefs2(sel.ws, extractWSDef));
         decs.methods = [].concat(getDefs2(sel.method, extractMethodDef2));
         decs.properties = [].concat(getDefs2(sel.prop, extractPropDef2));
         decs.sensors = [].concat(getDefs2(sel.sensor, extractSensorDef2));
@@ -460,6 +666,7 @@
 
         var d =  {
             name: extractString2(node, 'name'),
+            bypass: extractString2(node, 'bypass'),
             control: extractBool2(node, 'control'),
             optional: extractBool2(node, 'optional'),
             field: extractString2(node, 'field'),
@@ -610,6 +817,19 @@
 
         return d;
 
+    }
+
+    function extractWSDef (node) {
+        var def = {
+            name: extractString2(node, "name"),
+            socket: extractString2(node, "socket"),
+            socketType: null,
+            prop: extractBool2(node, 'prop')
+        }
+
+        applyFieldType(def, 'socket', PROP);
+
+        return def;
     }
 
     function extractNetDef2(node){
@@ -779,6 +999,168 @@
                 return att.value;
         }
         return undefined;
+    }
+
+    function tokenize (str) {
+        let chains = str.split(/[;\n]/);
+
+        return chains.map(chain => chain && chain.trim()).filter(chain => chain !== "");
+    }
+
+    // chain = array of links
+    function parseChain (chain) {
+        const links = chain.split("|").map(link => link.trim());
+        return links;
+    }
+
+    // for each array of links in arr of links, parse link
+    // return array of bits per link in chain
+    function parseLink (link) {
+            // @    event
+            // #    attr or prop
+            // *    method
+            // ?    optional object prop or data loc
+            // !    needed data loc
+            // .    chain/deref operator
+            // :    topic operator
+
+        const first = link.charAt(0);
+        const syms = ["@", "#", "*"];
+
+        if (syms.indexOf(first) !== -1)
+            return [first, link.slice(1)];
+
+        else {
+           let bits = link.split(".");
+           return bits;
+        }
+    }
+
+    // for each array of bits  of link of chain
+    // return plan object
+    function planLink (bits) {
+        /*
+         * data | dataTopic | event | attr | method | filterMethod
+         * name | name      | name  | name | name   | name
+         *      | topic
+         */
+        const typeMap = {
+            "@": "event",
+            "#": "attr",
+            "*": "method"
+        };
+
+        if (bits[0] in typeMap) {
+            let plan = {
+                type: typeMap[bits[0]]
+            };
+
+            if (/\?$/.test(bits[1]) && plan.type === "method") {
+                plan.filter = true;
+                plan.name = bits[1].slice(0, -1);
+            } else {
+                plan.name = bits[1];
+            }
+
+            return plan;
+
+        } else {
+            return bits.map(planData);
+        }
+    }
+
+    // d p? cp
+    function planData (bit, _i) {
+        // first bit is always the data loc name
+        if (_i === 0) {
+            let name, topic;
+
+            let names = bit.split(",");
+
+            if (names.length > 1) {
+                let plans =  [];
+
+                for (let j = 0; j < names.length; j++) {
+                    plans.push(buildDataPlan(names[j]));
+                }
+
+                return plans;
+
+            } else {
+                return buildDataPlan(names[0]);
+            }
+
+        } else {
+            return buildProp(bit);
+        }
+    }
+
+    function buildProp (bit) {
+        let optional = /\?$/.test(bit);
+
+        return {
+            type: "prop",
+            optional: optional,
+            name: optional ? bit.slice(0, -1) : bit
+        };
+    }
+
+    function buildDataPlan (bit) {
+        let parts = bit.split(":");
+
+        let plan = {
+            name: parts[0],
+            type: "data"
+        };
+
+        if (parts[1]) plan.topic = parts[1];
+
+        if (/\?$/.test(parts[0])) {
+            plan.name = plan.name.slice(0, -1);
+            plan.optional = true;
+        }
+
+        if (/!$/.test(parts[0])) {
+            plan.name = plan.name.slice(0, -1);
+            plan.need = true;
+        }
+
+        return plan;
+    }
+
+    function parseTemplate (attrString) {
+        const chain = tokenize(attrString);
+        const links = chain.map(parseChain);
+        const bits  = links.map(link => link.map(parseLink));
+        const plans = bits.map(bitSet => bitSet.map(planLink));
+
+        /**
+         * get each piece of each plan in the plans
+         * (is that piece an array?)
+         * then
+         * get the place of that piece in the plan
+         * and splice each bit of that piece
+         * into the plan at the place where
+         * that piece was
+         *
+         * flatten the array a bit, that is
+         */
+        for (let plan of plans) {
+            for (let piece of plan) {
+
+                if (Array.isArray(piece)) {
+                    let place = plan.indexOf(piece);
+                    let first = true;
+
+                    for (let bit of piece) {
+                        plan.splice(place++, first ? 1 : 0, bit);
+                        first = false;
+                    }
+                }
+            }
+        }
+
+        return plans;
     }
 
 })(this);
