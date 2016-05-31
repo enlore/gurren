@@ -12,12 +12,12 @@
   "dependencies": {
     "catbus": "^2.2.0",
     "cognition-framework": "^1.2.1",
-    "cognition-kakashi": "^1.0.15",
+    "cognition-kakashi": "^1.0.18",
     "cognition-vash": "^1.0.1",
     "jquery": "^2.2.4",
     "motoko": "^1.0.0",
     "ohmu": "^1.1.1",
-    "rei": "^1.0.3",
+    "rei": "^1.0.4",
     "seele": "^1.2.1",
     "tachikoma": "^1.1.2"
   }
